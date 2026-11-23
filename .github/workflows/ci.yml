@@ -1,7 +1,11 @@
 
-name: CD - Publicacao no GitHub Pages
+name: CI - Validacao e CD - Publicacao no GitHub Pages
 
 on:
+  pull_request:
+    branches:
+      - main
+
   push:
     branches:
       - main
@@ -10,15 +14,86 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
 
 jobs:
+  validate:
+    name: Validar imagens do projeto
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Verificar imagens do HTML
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          from urllib.parse import urlsplit, unquote
+          import sys
+
+          class ImageParser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.sources = []
+
+              def handle_starttag(self, tag, attrs):
+                  if tag.lower() == "img":
+                      for key, value in attrs:
+                          if key.lower() == "src" and value:
+                              self.sources.append(value)
+
+          missing = []
+
+          for html_file in Path(".").rglob("*.html"):
+              if ".git" in html_file.parts:
+                  continue
+
+              parser = ImageParser()
+              parser.feed(html_file.read_text(encoding="utf-8"))
+
+              for src in parser.sources:
+                  parsed = urlsplit(src)
+
+                  if parsed.scheme or src.startswith("//"):
+                      continue
+
+                  if not parsed.path:
+                      continue
+
+                  path = unquote(parsed.path)
+
+                  if path.startswith("/"):
+                      target = Path(path.lstrip("/"))
+                  else:
+                      target = html_file.parent / path
+
+                  if not target.is_file():
+                      missing.append((html_file, src))
+
+          if missing:
+              print("ERRO: Imagens nao encontradas:")
+              for html_file, src in missing:
+                  print(f"{html_file}: {src}")
+              sys.exit(1)
+
+          print("SUCESSO: Todas as imagens foram encontradas!")
+          PY
+
   deploy:
+    name: Publicar no GitHub Pages
+    needs: validate
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
