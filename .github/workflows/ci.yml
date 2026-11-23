@@ -40,3 +40,13 @@ jobs:
       - name: Publicar site
         id: deployment
         uses: actions/deploy-pages@v4
+
+
+      - name: Notificar falha no Discord
+        if: failure()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl -H "Content-Type: application/json" \
+          -d '{"content":"ATENCAO! O deploy do portfolio falhou. Verifique a aba Actions do GitHub."}' \
+          "$DISCORD_WEBHOOK"
