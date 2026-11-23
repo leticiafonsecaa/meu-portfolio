@@ -1,0 +1,99 @@
+
+name: CI - Validacao do Portfolio
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  qualidade:
+    name: Validar Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18, 20]
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Verificar index.html
+        run: |
+          if [ ! -f index.html ]; then
+            echo "ERRO: index.html nao encontrado na raiz!"
+            exit 1
+          fi
+          echo "index.html encontrado!"
+
+      - name: Instalar Linter HTML
+        run: npm install --no-save htmlhint
+
+      - name: Executar Linter
+        run: npx htmlhint index.html
+
+      - name: Verificar arquivos maiores que 500KB
+        run: |
+          arquivos=$(find . -type f -not -path './.git/*' -size +500k)
+          if [ -n "$arquivos" ]; then
+            echo "ERRO: Arquivos maiores que 500KB:"
+            echo "$arquivos"
+            exit 1
+          fi
+          echo "Todos os arquivos estao dentro do limite!"
+
+      - name: Procurar termos proibidos
+        run: |
+          if grep -RniE 'TODO|FIXME|senha|password' \
+            --include='*.html' --include='*.css' \
+            --include='*.js' --include='*.md' .; then
+            echo "ERRO: Foram encontrados termos proibidos!"
+            exit 1
+          fi
+          echo "Nenhum termo proibido encontrado!"
+
+      - name: Verificar links e imagens
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from urllib.parse import urlparse
+          from pathlib import Path
+          import sys
+
+          class Verificador(HTMLParser):
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  valor = attrs.get('href') if tag == 'a' or tag == 'link' else attrs.get('src') if tag == 'img' else None
+
+                  if not valor or valor.startswith(('#', 'mailto:', 'tel:', 'data:')):
+                      return
+
+                  url = urlparse(valor)
+
+                  if url.scheme in ('http', 'https'):
+                      return
+
+                  caminho = Path(url.path)
+                  if not caminho.is_absolute():
+                      caminho = Path('index.html').parent / caminho
+
+                  if not caminho.exists():
+                      print(f'ERRO: Caminho inexistente: {valor}')
+                      self.erro = True
+
+              erro = False
+
+          verificador = Verificador()
+          verificador.feed(Path('index.html').read_text(encoding='utf-8'))
+
+          if verificador.erro:
+              sys.exit(1)
+
+          print('Links e imagens locais verificados!')
+          PY
